@@ -174,6 +174,8 @@ export async function loadWorld(userId: string): Promise<Snapshot> {
     pairRequests: ((requests.data ?? []) as RequestRow[]).map((r) => ({
       id: r.id,
       fromUserId: r.from_user_id,
+      fromEmail: r.from_email,
+      fromName: r.from_name,
       toEmail: r.to_email,
       status: r.status,
       createdAt: r.created_at,

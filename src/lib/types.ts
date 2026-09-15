@@ -26,6 +26,12 @@ export type PairRequestStatus = 'pending' | 'accepted' | 'declined' | 'cancelled
 export interface PairRequest {
   id: string
   fromUserId: string
+  /**
+   * Carried on the request itself because the addressee cannot read the
+   * sender's profile row — they are not partners yet, so RLS hides it.
+   */
+  fromEmail: string
+  fromName: string
   toEmail: string
   status: PairRequestStatus
   createdAt: string

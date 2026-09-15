@@ -36,9 +36,9 @@ The file is safe to run again if you need to.
 > and email OTP are part of the Email provider and are on by default. If you
 > went looking for that switch and could not find it, nothing is wrong.
 
-1. **Authentication → Sign In / Providers → Email** — the only things to check
-   here are that **Email** is enabled and **Confirm email** is on. Both are the
-   defaults.
+1. **Authentication → Sign In / Providers → Email** — check that **Email** is
+   enabled. **Confirm email** is on by default; see the password note below
+   before you decide whether to leave it that way.
 2. **Authentication → URL Configuration** — this is the part that actually
    matters. A magic link may only send the browser to a URL on this list.
    - Site URL: `http://localhost:5173` — a plain origin, **no `/**` glob**.
@@ -59,6 +59,29 @@ The file is safe to run again if you need to.
 4. **Project Settings → API**, copy these two values:
    - **Project URL** → `VITE_SUPABASE_URL`
    - **anon public** key → `VITE_SUPABASE_ANON_KEY`
+
+### Passwords, and why you probably want them
+
+A Supabase project on the free tier sends a handful of auth emails per hour
+through the shared sender. Sign-in links and 6-digit codes both come out of that
+allowance, so a couple of testers can exhaust it in an afternoon and then nobody
+can get in. The app therefore offers **Password** as the first sign-in method and
+the email link as the second — a password sign-in sends no mail at all and has no
+quota.
+
+Two settings decide how that behaves:
+
+- **Confirm email** (Authentication → Sign In / Providers → Email). Left **on**,
+  creating an account still costs one email and the new account cannot sign in
+  until it is opened; the app says so instead of pretending it worked. Turned
+  **off**, signing up with a password works instantly and sends nothing. For a
+  two-person app where you know both addresses, off is the sensible choice.
+- **Authentication → URL Configuration** must already list your origin, because
+  the password-reset link comes back to `/auth` the same way a magic link does.
+
+Anyone who already signed in with a link can set a password from
+**You → Password** without sending any email. Forgotten passwords use
+**Forgot password?** on the sign-in screen, which does send one.
 
 > The anon key is *designed* to sit in a browser bundle — it can only do what
 > the row-level security policies allow. The **service_role** key on that same

@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useApp } from '../lib/store'
+import { AppError, useApp } from '../lib/store'
 import { Screen } from '../components/Shell'
 import {
   Avatar,
   Button,
   Card,
   Divider,
+  Field,
   Input,
   Modal,
   ScreenHeader,
@@ -24,6 +25,23 @@ export default function Profile() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [reporting, setReporting] = useState(false)
   const [typed, setTyped] = useState('')
+  const [pw, setPw] = useState('')
+  const [pwBusy, setPwBusy] = useState(false)
+  const [pwError, setPwError] = useState<string | null>(null)
+
+  async function savePassword() {
+    setPwError(null)
+    setPwBusy(true)
+    try {
+      await actions.updatePassword(pw)
+      setPw('')
+      toast('Password saved 🔑')
+    } catch (e) {
+      setPwError(e instanceof AppError ? e.message : 'Could not save that password.')
+    } finally {
+      setPwBusy(false)
+    }
+  }
 
   if (!me) return null
 
@@ -109,6 +127,43 @@ export default function Profile() {
           Manage calendars
         </Button>
       </Card>
+
+      {/* Password ----------------------------------------------------------- */}
+      {hasSupabase && (
+        <>
+          <h2 className="mb-3 mt-7 text-[17px] font-extrabold">Password</h2>
+          <Card>
+            <p className="text-[13px] leading-relaxed text-plum-soft">
+              Set one and you can sign in without waiting for an email. Sign-in links and codes
+              share a sending quota; a password does not.
+            </p>
+            <div className="mt-4">
+              <Field label="New password" hint="At least 8 characters.">
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="••••••••"
+                  value={pw}
+                  onChange={(e) => setPw(e.target.value)}
+                />
+              </Field>
+            </div>
+            {pwError && (
+              <p className="mt-3 rounded-2xl bg-[#fdf0ee] px-4 py-3 text-sm font-medium text-[#c0392b]">
+                {pwError}
+              </p>
+            )}
+            <Button
+              full
+              className="mt-4"
+              disabled={pw.length < 8 || pwBusy}
+              onClick={() => void savePassword()}
+            >
+              {pwBusy ? 'Saving…' : 'Save password'}
+            </Button>
+          </Card>
+        </>
+      )}
 
       {/* Feedback ----------------------------------------------------------- */}
       <Divider label="Help us fix it" />
