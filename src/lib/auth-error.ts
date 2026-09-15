@@ -38,3 +38,40 @@ export function readAuthError(url = window.location.href): AuthUrlError | null {
 export function clearAuthError() {
   window.history.replaceState({}, '', window.location.pathname)
 }
+
+/**
+ * Errors the auth API returns to a call we made, as opposed to the ones it
+ * puts in the URL above. Supabase sets `code` on recent releases and only a
+ * message on older ones, so both are checked.
+ */
+const API: Record<string, string> = {
+  invalid_credentials:
+    'That email and password do not match. Check the password, or send yourself a reset link.',
+  email_not_confirmed:
+    'This account still has to confirm its email. Open the confirmation email, or sign in with a link instead.',
+  user_already_exists:
+    'An account with this email already exists. Sign in with your password, or reset it if you have forgotten.',
+  weak_password: 'That password is too weak. Use at least 8 characters.',
+  same_password: 'That is already your password. Pick a different one.',
+  over_email_send_rate_limit:
+    'This project has sent too many emails in the last hour. Wait a while, or use a password instead of a link.',
+  over_request_rate_limit: 'Too many attempts in a row. Wait a minute and try again.',
+  validation_failed: 'Check the email and password, then try again.',
+}
+
+export function authMessage(error: { message: string; code?: string; status?: number }) {
+  if (error.code && API[error.code]) return API[error.code]
+  if (error.status === 429) return API.over_request_rate_limit
+
+  const m = error.message.toLowerCase()
+  if (m.includes('invalid login credentials')) return API.invalid_credentials
+  if (m.includes('already registered') || m.includes('already exists')) return API.user_already_exists
+  if (m.includes('email rate limit') || m.includes('rate limit')) return API.over_email_send_rate_limit
+  if (m.includes('password should be') || m.includes('password is too')) return API.weak_password
+  if (m.includes('email not confirmed')) return API.email_not_confirmed
+  // The request never left the browser: wrong project URL, the dev server
+  // started without env vars, or simply no connection.
+  if (m.includes('failed to fetch') || m.includes('load failed') || m.includes('networkerror'))
+    return 'Could not reach the server. Check that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY point at your project, then reload.'
+  return error.message
+}

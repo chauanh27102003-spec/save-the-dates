@@ -38,8 +38,12 @@ the database itself in `supabase/schema.sql`:
    shared wishlist, dates and diary. Pairing runs in a single transaction
    (`respond_pair_request`) so neither side can end up half-matched.
 2. **One calendar account, one app account.** A Google or iCloud address can be
-   bound to exactly one Save the Dates account — `calendar_links.account_email`
-   is the primary key, so a second claim fails at the database.
+   bound to exactly one Save the Dates account, so a second, parallel date life
+   cannot be run off the same calendar. It is *not* one address per calendar:
+   most people keep their Google and iPhone calendar on the same address, and
+   that address holds both of theirs. `calendar_links` is keyed on
+   `(account_email, provider)`, and `link_calendar()` refuses an address that
+   another account already claimed — without saying who holds it.
 3. **One device, one account.** The session is remembered; signing in as someone
    else requires signing out first.
 
@@ -51,7 +55,14 @@ Past / Diary) and the ranking inside Places (Wishlist / Ranking).
 
 ## What is implemented
 
-- **Sign in by email** — remembered per device, sign out, delete account.
+- **Sign in by password or by email link** — password first, because sign-in
+  links and codes come out of a small shared mail quota and a password sends
+  nothing. Existing link users can set one from *You → Password*; forgotten ones
+  go through a reset link. Remembered per device, sign out, delete account.
+- **Linking is in-app, not by email** — sending a request writes it to the
+  database, where it waits for whoever signs in with that address. Nothing
+  emails the partner, so the sender gets a **Share the invite** action that
+  copies (or opens the share sheet with) a link carrying the address.
 - **Calendar permission** — Google Calendar and iPhone Calendar permission
   sheets, account binding, disconnect.
 - **Wishlist** — search (mock Google Places), save with a Google Maps link,

@@ -35,6 +35,7 @@ import {
   type CategoryOption,
 } from './categories'
 import { APP_VERSION, hasSupabase } from './config'
+import { authMessage } from './auth-error'
 import * as cloud from './cloud'
 
 const WORLD_KEY = 'std.world.v1'
@@ -142,6 +143,8 @@ interface Ctx {
   myFeedback: FeedbackReport[]
   /** 'loading' while the cloud snapshot is still on its way. */
   status: 'loading' | 'ready'
+  /** True between opening a password-reset link and setting the new password. */
+  recovery: boolean
   /** Set when a background save failed, so the UI can stop pretending. */
   syncError: string | null
   cloud: boolean
@@ -156,6 +159,25 @@ interface Actions {
   signIn(email: string, name?: string): Promise<{ emailed: boolean; user: User | null }>
   /** Finish sign-in with the 6-digit code from the email. */
   verifyCode(email: string, code: string): Promise<void>
+  /**
+   * Sign in with a password — no email, so it is not subject to the mail
+   * quota that limits the link and code flows. Cloud mode only.
+   */
+  signInWithPassword(email: string, password: string): Promise<void>
+  /**
+   * Create an account with a password. `confirmNeeded` is true when the
+   * project still has "Confirm email" switched on, in which case Supabase
+   * withholds the session until the address is verified.
+   */
+  signUpWithPassword(
+    email: string,
+    password: string,
+    name?: string,
+  ): Promise<{ confirmNeeded: boolean }>
+  /** Email a reset link for a forgotten password. */
+  sendPasswordReset(email: string): Promise<void>
+  /** Set a first password, or change the current one. Requires a session. */
+  updatePassword(password: string): Promise<void>
   signOut(): Promise<void>
   deleteAccount(): Promise<void>
   sendPairRequest(email: string): Promise<void>
@@ -212,6 +234,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
   const [status, setStatus] = useState<'loading' | 'ready'>(hasSupabase ? 'loading' : 'ready')
   const [syncError, setSyncError] = useState<string | null>(null)
+  const [recovery, setRecovery] = useState(false)
 
   // Cloud bookkeeping. Refs, not state: the flusher needs the latest values
   // without re-running on every keystroke.
@@ -355,9 +378,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     cloud.sb.auth.getSession().then(({ data }) => apply(data.session?.user.id ?? null))
-    const { data: sub } = cloud.sb.auth.onAuthStateChange((_event, s) =>
-      apply(s?.user.id ?? null),
-    )
+    const { data: sub } = cloud.sb.auth.onAuthStateChange((event, s) => {
+      // A reset link signs the user in, which would otherwise drop them
+      // straight into the app without ever setting the new password.
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true)
+      if (event === 'SIGNED_OUT') setRecovery(false)
+      return apply(s?.user.id ?? null)
+    })
 
     return () => {
       alive = false
@@ -484,7 +511,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             data: name?.trim() ? { name: name.trim() } : undefined,
           },
         })
-        if (error) throw new AppError(error.message)
+        if (error) throw new AppError(authMessage(error))
         return { emailed: true, user: null }
       }
 
@@ -516,7 +543,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
         token: code.replace(/\D/g, ''),
         type: 'email',
       })
-      if (error) throw new AppError(error.message)
+      if (error) throw new AppError(authMessage(error))
+    },
+
+    async signInWithPassword(email, password) {
+      if (!hasSupabase || !cloud.sb)
+        throw new AppError('Passwords need the server. Local mode signs you in with an email alone.')
+      if (session) throw new AppError('This device is already signed in. Sign out first.')
+      const { error } = await cloud.sb.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      })
+      if (error) throw new AppError(authMessage(error))
+    },
+
+    async signUpWithPassword(email, password, name) {
+      if (!hasSupabase || !cloud.sb)
+        throw new AppError('Passwords need the server. Local mode signs you in with an email alone.')
+      const clean = email.trim().toLowerCase()
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean))
+        throw new AppError('That email does not look right.')
+      if (session) throw new AppError('This device is already signed in. Sign out first.')
+      if (password.length < 8) throw new AppError('Use at least 8 characters for the password.')
+
+      const { data, error } = await cloud.sb.auth.signUp({
+        email: clean,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth`,
+          data: name?.trim() ? { name: name.trim() } : undefined,
+        },
+      })
+      if (error) throw new AppError(authMessage(error))
+      // With user enumeration protection on, signing up an address that is
+      // already taken succeeds quietly and returns a user with no identities.
+      if (data.user && data.user.identities?.length === 0) {
+        throw new AppError(authMessage({ message: '', code: 'user_already_exists' }))
+      }
+      return { confirmNeeded: !data.session }
+    },
+
+    async sendPasswordReset(email) {
+      if (!hasSupabase || !cloud.sb)
+        throw new AppError('Passwords need the server. Local mode signs you in with an email alone.')
+      const { error } = await cloud.sb.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+        redirectTo: `${window.location.origin}/auth`,
+      })
+      if (error) throw new AppError(authMessage(error))
+    },
+
+    async updatePassword(password) {
+      if (!hasSupabase || !cloud.sb)
+        throw new AppError('Passwords need the server. Local mode signs you in with an email alone.')
+      if (password.length < 8) throw new AppError('Use at least 8 characters for the password.')
+      const { error } = await cloud.sb.auth.updateUser({ password })
+      if (error) throw new AppError(authMessage(error))
+      setRecovery(false)
     },
 
     async signOut() {
@@ -604,6 +686,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             {
               id: uid('pr'),
               fromUserId: me.id,
+              fromEmail: me.email,
+              fromName: me.name,
               toEmail: clean,
               status: 'pending',
               createdAt: new Date().toISOString(),
@@ -702,7 +786,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const owner = world.calendarOwners[clean]
       if (owner && owner !== me.id)
         throw new AppError(
-          'That calendar account is already linked to another Save the Dates account. One calendar, one account.',
+          'That calendar account is already linked to another Save the Dates account. One calendar account, one app account.',
         )
       if (me.calendars.some((c) => c.provider === provider))
         throw new AppError(
@@ -716,10 +800,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : ['EventKit.read', 'EventKit.write']
 
       if (hasSupabase) {
-        // The unique constraint is the real gate; a client check only saves a
-        // round trip when we already know the answer.
+        // link_calendar() is the real gate; the checks above only save a round
+        // trip when we already know the answer.
         try {
-          await cloud.linkCalendar(myId, provider, clean, scopes)
+          await cloud.linkCalendar(provider, clean, scopes)
         } catch (e) {
           throw new AppError(e instanceof Error ? e.message : 'Could not link that calendar.')
         }
@@ -771,7 +855,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (hasSupabase) {
         if (link) {
           try {
-            await cloud.unlinkCalendar(link.accountEmail)
+            await cloud.unlinkCalendar(myId, provider)
           } catch (e) {
             throw new AppError(e instanceof Error ? e.message : 'Could not disconnect.')
           }
@@ -784,14 +868,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return
       }
 
+      // The same address usually holds both of your calendars, so the claim on
+      // it only lifts once neither of them is using it.
+      const stillMine = me.calendars.some(
+        (c) => c.provider !== provider && c.accountEmail === link?.accountEmail,
+      )
+
       update((w) => ({
         ...w,
         users: w.users.map((u) =>
           u.id === myId ? { ...u, calendars: u.calendars.filter((c) => c.provider !== provider) } : u,
         ),
-        calendarOwners: Object.fromEntries(
-          Object.entries(w.calendarOwners).filter(([email]) => email !== link?.accountEmail),
-        ),
+        calendarOwners: stillMine
+          ? w.calendarOwners
+          : Object.fromEntries(
+              Object.entries(w.calendarOwners).filter(([email]) => email !== link?.accountEmail),
+            ),
         busy: w.busy.filter((b) => !(b.userId === myId && b.provider === provider && !b.fromApp)),
       }))
     },
@@ -1188,6 +1280,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     milestoneKinds,
     myFeedback,
     status,
+    recovery,
     syncError,
     cloud: hasSupabase,
     actions,

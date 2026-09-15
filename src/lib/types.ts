@@ -26,6 +26,12 @@ export type PairRequestStatus = 'pending' | 'accepted' | 'declined' | 'cancelled
 export interface PairRequest {
   id: string
   fromUserId: string
+  /**
+   * Carried on the request itself because the addressee cannot read the
+   * sender's profile row — they are not partners yet, so RLS hides it.
+   */
+  fromEmail: string
+  fromName: string
   toEmail: string
   status: PairRequestStatus
   createdAt: string
@@ -204,7 +210,10 @@ export interface World {
   /** Categories the couple added on top of the built-in ones. */
   categories: CustomCategory[]
   feedback: FeedbackReport[]
-  /** calendar account email -> app user id. Enforces one calendar per account. */
+  /**
+   * calendar account email -> app user id. Enforces "one calendar account,
+   * one app account"; the same owner may use the address for both providers.
+   */
   calendarOwners: Record<string, string>
 }
 

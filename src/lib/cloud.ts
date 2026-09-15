@@ -174,6 +174,8 @@ export async function loadWorld(userId: string): Promise<Snapshot> {
     pairRequests: ((requests.data ?? []) as RequestRow[]).map((r) => ({
       id: r.id,
       fromUserId: r.from_user_id,
+      fromEmail: r.from_email,
+      fromName: r.from_name,
       toEmail: r.to_email,
       status: r.status,
       createdAt: r.created_at,
@@ -239,33 +241,33 @@ export async function respondPairRequest(id: string, accept: boolean) {
   if (error) throw new CloudError(humanise(error.message))
 }
 
+/**
+ * Claiming an address is a check against rows this client is not allowed to
+ * read, so it has to happen server-side — see `link_calendar` in schema.sql.
+ */
 export async function linkCalendar(
-  userId: string,
   provider: CalendarProvider,
   accountEmail: string,
   scopes: string[],
 ) {
-  const { error } = await client().from('calendar_links').insert({
-    account_email: accountEmail,
-    user_id: userId,
-    provider,
-    scopes,
+  const { error } = await client().rpc('link_calendar', {
+    p_provider: provider,
+    p_email: accountEmail,
+    p_scopes: scopes,
   })
-  if (!error) return
-  // 23505 = unique violation. Either the address or the slot is already taken,
-  // and we deliberately do not say who holds it.
-  if (error.code === '23505') {
-    throw new CloudError(
-      error.message.includes('user_id')
-        ? `You already linked a ${provider === 'google' ? 'Google' : 'iPhone'} calendar. Disconnect it first.`
-        : 'That calendar account is already linked to another Save the Dates account. One calendar, one account.',
-    )
-  }
-  throw new CloudError(error.message)
+  if (error) throw new CloudError(humanise(error.message))
 }
 
-export async function unlinkCalendar(accountEmail: string) {
-  const { error } = await client().from('calendar_links').delete().eq('account_email', accountEmail)
+/**
+ * By provider, not by address: the same address commonly holds both this
+ * account's Google and iPhone calendar, and only one of them is going away.
+ */
+export async function unlinkCalendar(userId: string, provider: CalendarProvider) {
+  const { error } = await client()
+    .from('calendar_links')
+    .delete()
+    .eq('user_id', userId)
+    .eq('provider', provider)
   if (error) throw new CloudError(error.message)
 }
 

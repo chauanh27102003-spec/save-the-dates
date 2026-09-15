@@ -53,18 +53,23 @@ create unique index if not exists pair_requests_one_pending
   where status = 'pending';
 
 -- --------------------------------------------------------- calendar_links
--- account_email is the PRIMARY KEY on purpose. A Google or iCloud account can
--- belong to exactly one Save the Dates account — this is the anti-cheating
--- rule, enforced by the database rather than by the client.
+-- The anti-cheating rule is "one calendar account, one app account" — not one
+-- row per address. Most people keep their Google and their iPhone calendar on
+-- the same address, so the key is (account_email, provider): that address may
+-- hold both of its own calendars, while link_calendar() below refuses it to a
+-- second app account.
 create table if not exists public.calendar_links (
-  account_email text primary key,
+  account_email text not null,
   user_id       uuid not null references public.profiles(id) on delete cascade,
   provider      text not null check (provider in ('google', 'ios')),
   scopes        text[] not null default '{}',
   connected_at  timestamptz not null default now(),
+  primary key (account_email, provider),
   -- ...and one Google calendar + one iPhone calendar per account.
   unique (user_id, provider)
 );
+
+create index if not exists calendar_links_user_idx on public.calendar_links (user_id);
 
 -- --------------------------------------------------------------- feedback
 create table if not exists public.feedback (
@@ -158,15 +163,15 @@ create policy pair_requests_select on public.pair_requests
   for select using (from_user_id = auth.uid() or to_email = public.my_email());
 
 -- calendar_links: yours, plus read access to your partner's so the app can
--- compare free/busy. A link for an email someone else owns fails on the
--- primary key — without revealing who owns it.
+-- compare free/busy.
 drop policy if exists calendar_links_select on public.calendar_links;
 create policy calendar_links_select on public.calendar_links
   for select using (user_id = auth.uid() or user_id = public.my_partner_id());
 
+-- No insert policy on purpose. "One calendar account, one app account" is a
+-- rule about rows this client cannot see, so it cannot be a row-level check —
+-- link_calendar() owns the claim and is the only way in.
 drop policy if exists calendar_links_insert on public.calendar_links;
-create policy calendar_links_insert on public.calendar_links
-  for insert with check (user_id = auth.uid());
 
 drop policy if exists calendar_links_delete on public.calendar_links;
 create policy calendar_links_delete on public.calendar_links
@@ -292,6 +297,53 @@ begin
 end;
 $$;
 
+-- Claims a calendar account for the signed-in user and links one of its two
+-- calendars. The address may already be linked to this account's *other*
+-- provider; it may not belong to anyone else.
+create or replace function public.link_calendar(
+  p_provider text,
+  p_email    text,
+  p_scopes   text[] default '{}'
+)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  clean text := lower(trim(p_email));
+  label text := case p_provider when 'google' then 'Google' else 'iPhone' end;
+  taken uuid;
+begin
+  if auth.uid() is null then raise exception 'Not signed in'; end if;
+  if p_provider not in ('google', 'ios') then
+    raise exception 'Unknown calendar provider.';
+  end if;
+  if clean !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    raise exception 'Enter a valid calendar account.';
+  end if;
+
+  -- Two people racing to claim the same address must not both win.
+  perform pg_advisory_xact_lock(hashtext(clean));
+
+  select user_id into taken
+    from public.calendar_links
+   where account_email = clean and user_id <> auth.uid()
+   limit 1;
+  -- Deliberately does not say who holds it.
+  if taken is not null then
+    raise exception 'That calendar account is already linked to another Save the Dates account. One calendar account, one app account.';
+  end if;
+
+  if exists (
+    select 1 from public.calendar_links
+     where user_id = auth.uid() and provider = p_provider
+  ) then
+    raise exception 'You already linked a % calendar. Disconnect it first.', label;
+  end if;
+
+  insert into public.calendar_links (account_email, user_id, provider, scopes)
+  values (clean, auth.uid(), p_provider, coalesce(p_scopes, '{}'));
+end;
+$$;
+
 -- Optimistic save. Returns the new version, or raises when the partner wrote
 -- first — the client then refetches and replays its change.
 create or replace function public.save_space(p_id uuid, p_version integer, p_data jsonb)
@@ -339,6 +391,7 @@ $$;
 grant execute on function public.find_partner_candidate(text) to authenticated;
 grant execute on function public.send_pair_request(text)      to authenticated;
 grant execute on function public.respond_pair_request(uuid, boolean) to authenticated;
+grant execute on function public.link_calendar(text, text, text[])  to authenticated;
 grant execute on function public.save_space(uuid, integer, jsonb)    to authenticated;
 grant execute on function public.delete_my_account()          to authenticated;
 
