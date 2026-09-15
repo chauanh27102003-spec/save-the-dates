@@ -210,7 +210,10 @@ export interface World {
   /** Categories the couple added on top of the built-in ones. */
   categories: CustomCategory[]
   feedback: FeedbackReport[]
-  /** calendar account email -> app user id. Enforces one calendar per account. */
+  /**
+   * calendar account email -> app user id. Enforces "one calendar account,
+   * one app account"; the same owner may use the address for both providers.
+   */
   calendarOwners: Record<string, string>
 }
 

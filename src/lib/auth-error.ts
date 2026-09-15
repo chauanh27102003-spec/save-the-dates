@@ -69,5 +69,9 @@ export function authMessage(error: { message: string; code?: string; status?: nu
   if (m.includes('email rate limit') || m.includes('rate limit')) return API.over_email_send_rate_limit
   if (m.includes('password should be') || m.includes('password is too')) return API.weak_password
   if (m.includes('email not confirmed')) return API.email_not_confirmed
+  // The request never left the browser: wrong project URL, the dev server
+  // started without env vars, or simply no connection.
+  if (m.includes('failed to fetch') || m.includes('load failed') || m.includes('networkerror'))
+    return 'Could not reach the server. Check that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY point at your project, then reload.'
   return error.message
 }

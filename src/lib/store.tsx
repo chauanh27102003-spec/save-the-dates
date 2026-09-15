@@ -786,7 +786,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const owner = world.calendarOwners[clean]
       if (owner && owner !== me.id)
         throw new AppError(
-          'That calendar account is already linked to another Save the Dates account. One calendar, one account.',
+          'That calendar account is already linked to another Save the Dates account. One calendar account, one app account.',
         )
       if (me.calendars.some((c) => c.provider === provider))
         throw new AppError(
@@ -800,10 +800,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : ['EventKit.read', 'EventKit.write']
 
       if (hasSupabase) {
-        // The unique constraint is the real gate; a client check only saves a
-        // round trip when we already know the answer.
+        // link_calendar() is the real gate; the checks above only save a round
+        // trip when we already know the answer.
         try {
-          await cloud.linkCalendar(myId, provider, clean, scopes)
+          await cloud.linkCalendar(provider, clean, scopes)
         } catch (e) {
           throw new AppError(e instanceof Error ? e.message : 'Could not link that calendar.')
         }
@@ -855,7 +855,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (hasSupabase) {
         if (link) {
           try {
-            await cloud.unlinkCalendar(link.accountEmail)
+            await cloud.unlinkCalendar(myId, provider)
           } catch (e) {
             throw new AppError(e instanceof Error ? e.message : 'Could not disconnect.')
           }
@@ -868,14 +868,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return
       }
 
+      // The same address usually holds both of your calendars, so the claim on
+      // it only lifts once neither of them is using it.
+      const stillMine = me.calendars.some(
+        (c) => c.provider !== provider && c.accountEmail === link?.accountEmail,
+      )
+
       update((w) => ({
         ...w,
         users: w.users.map((u) =>
           u.id === myId ? { ...u, calendars: u.calendars.filter((c) => c.provider !== provider) } : u,
         ),
-        calendarOwners: Object.fromEntries(
-          Object.entries(w.calendarOwners).filter(([email]) => email !== link?.accountEmail),
-        ),
+        calendarOwners: stillMine
+          ? w.calendarOwners
+          : Object.fromEntries(
+              Object.entries(w.calendarOwners).filter(([email]) => email !== link?.accountEmail),
+            ),
         busy: w.busy.filter((b) => !(b.userId === myId && b.provider === provider && !b.fromApp)),
       }))
     },

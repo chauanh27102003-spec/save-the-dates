@@ -30,6 +30,13 @@ yours again. Nothing here costs money; both free tiers are enough.
 
 The file is safe to run again if you need to.
 
+> **If your project was created before the calendar rule was corrected**, run
+> [`supabase/migrate-calendar-per-provider.sql`](supabase/migrate-calendar-per-provider.sql)
+> as well. `schema.sql` uses `create table if not exists`, so it will not
+> restructure a table that already exists — and the old table keyed on
+> `account_email` alone, which refused the second calendar on the address you
+> already use for the first. A fresh project needs only `schema.sql`.
+
 ## 3. Check email sign-in and the redirect URLs
 
 > There is **no "Magic Link" toggle** anywhere in the dashboard — magic links
@@ -122,7 +129,8 @@ for the second account:
 | 2 | Sign in as B in the other browser | Alpha's request waiting on /link |
 | 3 | B accepts | Both land in the app, "Together for 0 days" |
 | 4 | B connects a calendar, e.g. `b@gmail.com` | "Calendar connected ✅" |
-| 5 | A tries to connect **the same** `b@gmail.com` | Refused — one calendar, one account |
+| 5 | B connects their iPhone calendar with **the same** `b@gmail.com` | Accepted — one address, both of B's calendars |
+| 5b | A tries to connect **the same** `b@gmail.com` | Refused — one calendar account, one app account |
 | 6 | A plans a date and sends it | B's screen shows the pop-up **without reloading** |
 | 7 | B accepts | A sees "B said yes" live |
 | 8 | Sign out on A, sign in with a third email, request B | Refused — B already matched |

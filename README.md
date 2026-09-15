@@ -38,8 +38,12 @@ the database itself in `supabase/schema.sql`:
    shared wishlist, dates and diary. Pairing runs in a single transaction
    (`respond_pair_request`) so neither side can end up half-matched.
 2. **One calendar account, one app account.** A Google or iCloud address can be
-   bound to exactly one Save the Dates account — `calendar_links.account_email`
-   is the primary key, so a second claim fails at the database.
+   bound to exactly one Save the Dates account, so a second, parallel date life
+   cannot be run off the same calendar. It is *not* one address per calendar:
+   most people keep their Google and iPhone calendar on the same address, and
+   that address holds both of theirs. `calendar_links` is keyed on
+   `(account_email, provider)`, and `link_calendar()` refuses an address that
+   another account already claimed — without saying who holds it.
 3. **One device, one account.** The session is remembered; signing in as someone
    else requires signing out first.
 
